@@ -8,10 +8,12 @@ A Next.js + React + TypeScript dashboard for simulating separated Prefill / Deco
 - Virtual time advanced by discrete events only
 - `Start / Pause / Reset / Step / Speed`
 - Fixed random seed for reproducible runs
-- Configurable request rate, request cap, topology, batching, service time, and network latency
+- Configurable request rate, client concurrency, request cap, topology, batching, service time, and network latency
 - Configurable arrival pattern and linear batch-time models
 - Streaming token visualization
 - Request lifecycle drill-down with TTFT / TPOT / E2E timestamps
+- AISBench-style workload semantics for `request_rate`, `batch_size`, and `max_out_len`
+- AISBench-style performance tables for request-level metrics and common metrics
 - Realtime and final-summary chart modes
 - Metrics JSON export
 
@@ -35,20 +37,22 @@ npm start
 
 The default config lives in [src/sim/default-config.ts](/d:/project/pd_visualize/src/sim/default-config.ts).
 
-- `reqPerSec = 4`
-- `arrivalPattern = uniform_interval`
-- `maxRequestCount = 56`
-- `inputTokensPerRequest = 16000`
+- `reqPerSec = 0.3`
+- `arrivalPattern = aisbench_request_rate`
+- `clientBatchSize = 16`
+- `maxRequestCount = 16`
+- `inputTokensPerRequest = 64000`
 - `outputTokensPerRequest = 1000`
+- `simulationDurationSec = 120`
 - `prefillNodeCount = 2`
 - `decodeNodeCount = 1`
-- `prefillBatchSize = 2`
-- `decodeBatchSize = 4`
-- `prefillTimePerRequestMs = 900`
-- `prefillTimeSlopeMs = 90`
-- `decodeStepTimeMs = 60`
-- `decodeStepTimeSlopeMs = 10`
-- `decodeTokensPerStep = 20`
+- `prefillBatchSize = 1`
+- `decodeBatchSize = 32`
+- `prefillTimePerRequestMs = 8220`
+- `prefillTimeSlopeMs = 0`
+- `decodeStepTimeMs = 36.5`
+- `decodeStepTimeSlopeMs = 0`
+- `decodeTokensPerStep = 1`
 
 This default setup intentionally makes queueing, batch behavior, and streaming easy to observe.
 
@@ -75,11 +79,12 @@ Key files:
 
 The right-side config panel currently supports:
 
-- `req_per_sec`
+- `request_rate`
+- `batch_size`
 - `max_request_count`
 - `arrival_pattern`
 - `input_tokens_per_request`
-- `output_tokens_per_request`
+- `max_out_len`
 - `simulation_duration_sec`
 - `prefill_node_count`
 - `decode_node_count`
@@ -99,18 +104,23 @@ The right-side config panel currently supports:
 
 ## Metrics
 
-Per request:
+Request-level performance parameters:
 
 - `TTFT = first_token_time - arrival_time`
 - `TPOT = (last_token_time - first_token_time) / (output_tokens - 1)`
-- `E2E latency = finish_time - arrival_time`
+- `E2EL = finish_time - arrival_time`
+- `OutputTokenThroughput = 1000 / TPOT`
 
-System:
+Common metrics:
 
-- input throughput
-- output throughput
-- request throughput
-- avg / p50 / p90 / p99 / max
+- `Benchmark Duration = max(finish_time, current_time) - min(arrival_time)`
+- `Request Throughput = completed_requests / benchmark_duration`
+- `Prefill Token Throughput = sum(input_tokens for requests with TTFT) / sum(TTFT)`
+- `Input Token Throughput = total_input_tokens / benchmark_duration`
+- `Output Token Throughput = total_output_tokens / benchmark_duration`
+- `Total Token Throughput = (total_input_tokens + total_output_tokens) / benchmark_duration`
+- `Concurrency = sum(E2EL of completed requests) / benchmark_duration`
+- `avg / p50 / p90 / p99 / max` for `TTFT / TPOT / E2EL / OutputTokenThroughput`
 
 Tracked lifecycle timestamps are stored on each request record in [src/types/simulation.ts](/d:/project/pd_visualize/src/types/simulation.ts):
 
@@ -127,13 +137,36 @@ Tracked lifecycle timestamps are stored on each request record in [src/types/sim
 - `Realtime Mode`: plots cumulative realtime series against current virtual time
 - `Final Mode`: plots per-second bucketed throughput and queue summaries
 
+## AISBench compatibility
+
+This dashboard now includes an `aisbench_request_rate` workload mode inspired by:
+
+- `ais_bench/benchmark/configs/models/vllm_api/vllm_api_stream_chat.py`
+- `ais_bench/benchmark/tasks/openicl_api_infer.py`
+- `ais_bench/benchmark/openicl/icl_inferencer/icl_base_api_inferencer.py`
+- `ais_bench/benchmark/calculators/base_perf_metric_calculator.py`
+
+Implemented mappings:
+
+- `request_rate`
+  - if `request_rate < 0.1`, the client does not rate-limit request release
+  - otherwise the client releases one request every `1 / request_rate` seconds
+- `batch_size`
+  - interpreted as client-side max in-flight request concurrency
+  - this is separate from server-side `prefill_batch_size` and `decode_batch_size`
+- `max_out_len`
+  - mapped to the per-request output token target in the simulator
+  - internally this is still stored as `outputTokensPerRequest`
+
 ## Model assumptions
 
 This version uses a deliberately simple but extensible model:
 
 - request generation stops when either `simulationDurationSec` or `maxRequestCount` is reached
+- `arrival_pattern = aisbench_request_rate` mirrors AISBench request release and client concurrency behavior
 - `arrival_pattern = uniform_interval` sends one request every `1 / reqPerSec` seconds
 - `arrival_pattern = burst_per_sec` sends the per-second quota together at each whole-second boundary
+- all arrival modes are additionally constrained by client `batch_size`
 - Prefill nodes process up to `prefillBatchSize` queued requests together per batch
 - Decode nodes keep an active batch up to `decodeBatchSize`, and each decode step advances every request in that batch once
 - Prefill batch duration uses `prefill_time = prefillTimeSlopeMs * active_batch + prefillTimePerRequestMs`
@@ -142,6 +175,7 @@ This version uses a deliberately simple but extensible model:
 - service time and network latency are deterministic
 - `coordinator_dispatch_policy` is reused for both prefill and decode node selection
 - simulation stops at the configured time horizon; events beyond that horizon are not executed
+- common metrics follow AISBench naming where practical, but are computed from the simulator's current snapshot when the run is still in progress
 
 ## Extending the model
 

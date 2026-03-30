@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { formatMs } from "@/lib/format";
+import { type UiLocale, translateRequestStatus } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { ControllerSnapshot, RequestRecord } from "@/types/simulation";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +18,7 @@ import {
 
 interface TimelinePanelProps {
   snapshot: ControllerSnapshot;
+  locale: UiLocale;
   onSelectRequest: (requestId: string) => void;
 }
 
@@ -109,7 +111,14 @@ function buildNodePositions(snapshot: ControllerSnapshot) {
   return { points, prefillNodes, decodeNodes };
 }
 
-function FlowBoard({ snapshot }: { snapshot: ControllerSnapshot }) {
+function FlowBoard({
+  snapshot,
+  locale,
+}: {
+  snapshot: ControllerSnapshot;
+  locale: UiLocale;
+}) {
+  const zh = locale === "zh-CN";
   const { points, prefillNodes, decodeNodes } = useMemo(
     () => buildNodePositions(snapshot),
     [snapshot],
@@ -147,19 +156,19 @@ function FlowBoard({ snapshot }: { snapshot: ControllerSnapshot }) {
           className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
           style={{ left: `${points.client.x}%`, top: `${points.client.y}%` }}
         >
-          Client
+          {zh ? "客户端" : "Client"}
         </div>
         <div
           className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
           style={{ left: `${points.coordinator.x}%`, top: `${points.coordinator.y}%` }}
         >
-          Coordinator
+          {zh ? "协调器" : "Coordinator"}
         </div>
         <div
           className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
           style={{ left: `${points.client_return.x}%`, top: `${points.client_return.y}%` }}
         >
-          Client
+          {zh ? "客户端" : "Client"}
         </div>
 
         {prefillNodes.map((node) => (
@@ -170,7 +179,8 @@ function FlowBoard({ snapshot }: { snapshot: ControllerSnapshot }) {
           >
             <p>{node.id}</p>
             <p className="mt-0.5 text-[10px] text-amber-50">
-              batch {node.activeBatchSize} | q {node.queueLength}
+              {zh ? "批次" : "batch"} {node.activeBatchSize} |{" "}
+              {zh ? "队列" : "q"} {node.queueLength}
             </p>
           </div>
         ))}
@@ -183,7 +193,8 @@ function FlowBoard({ snapshot }: { snapshot: ControllerSnapshot }) {
           >
             <p>{node.id}</p>
             <p className="mt-0.5 text-[10px] text-sky-50">
-              batch {node.activeBatchSize} | q {node.queueLength}
+              {zh ? "批次" : "batch"} {node.activeBatchSize} |{" "}
+              {zh ? "队列" : "q"} {node.queueLength}
             </p>
           </div>
         ))}
@@ -223,13 +234,16 @@ function RequestRow({
   request,
   durationMs,
   currentTimeMs,
+  locale,
   onSelect,
 }: {
   request: RequestRecord;
   durationMs: number;
   currentTimeMs: number;
+  locale: UiLocale;
   onSelect: () => void;
 }) {
+  const zh = locale === "zh-CN";
   return (
     <button
       type="button"
@@ -238,7 +252,9 @@ function RequestRow({
     >
       <div>
         <p className="font-mono text-sm font-semibold">{request.id}</p>
-        <p className="text-xs text-[color:var(--muted-foreground)]">{request.status}</p>
+        <p className="text-xs text-[color:var(--muted-foreground)]">
+          {translateRequestStatus(request.status, locale)}
+        </p>
       </div>
 
       <div className="relative h-10 rounded-lg bg-[color:var(--secondary)]/50">
@@ -295,21 +311,30 @@ function RequestRow({
           TTFT{" "}
           {request.metrics.ttftMs !== undefined
             ? formatMs(request.metrics.ttftMs)
-            : "pending"}
+            : zh
+              ? "待完成"
+              : "pending"}
         </p>
         <p className="font-mono text-xs">
-          E2E{" "}
+          E2EL{" "}
           {request.metrics.e2eLatencyMs !== undefined
             ? formatMs(request.metrics.e2eLatencyMs)
-            : "pending"}
+            : zh
+              ? "待完成"
+              : "pending"}
         </p>
       </div>
     </button>
   );
 }
 
-export function TimelinePanel({ snapshot, onSelectRequest }: TimelinePanelProps) {
+export function TimelinePanel({
+  snapshot,
+  locale,
+  onSelectRequest,
+}: TimelinePanelProps) {
   const [page, setPage] = useState(1);
+  const zh = locale === "zh-CN";
   const reversedRequests = useMemo(
     () => [...snapshot.requests].reverse(),
     [snapshot.requests],
@@ -322,35 +347,42 @@ export function TimelinePanel({ snapshot, onSelectRequest }: TimelinePanelProps)
   return (
     <Card className="h-full">
       <CardHeader>
-        <CardTitle>Flow & Timeline</CardTitle>
+        <CardTitle>{zh ? "流动与时间轴" : "Flow & Timeline"}</CardTitle>
         <CardDescription>
-          The upper board animates traffic across concrete P and D instances. The
-          lower list paginates every request lifecycle in the simulation.
+          {zh
+            ? "上方画板展示请求在具体 P 与 D 实例间的流动动画，下方列表以分页方式展示所有请求生命周期。"
+            : "The upper board animates traffic across concrete P and D instances. The lower list paginates every request lifecycle in the simulation."}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <FlowBoard snapshot={snapshot} />
+        <FlowBoard snapshot={snapshot} locale={locale} />
 
         <div className="rounded-xl border border-[color:var(--border)]">
           <div className="flex flex-col gap-3 border-b border-[color:var(--border)] px-4 py-3 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-sm font-semibold">Request Lifecycles</p>
+              <p className="text-sm font-semibold">
+                {zh ? "请求生命周期" : "Request Lifecycles"}
+              </p>
               <p className="text-xs text-[color:var(--muted-foreground)]">
-                Amber = prefill, blue = decode, green = client-visible stream
+                {zh
+                  ? "琥珀色 = prefill，蓝色 = decode，绿色 = 客户端可见流式输出"
+                  : "Amber = prefill, blue = decode, green = client-visible stream"}
               </p>
             </div>
             <div className="flex items-center gap-2">
               <Badge variant="info">
-                page {safePage}/{totalPages}
+                {zh ? "页" : "page"} {safePage}/{totalPages}
               </Badge>
-              <Badge variant="default">{snapshot.requests.length} total requests</Badge>
+              <Badge variant="default">
+                {snapshot.requests.length} {zh ? "个请求" : "total requests"}
+              </Badge>
               <Button
                 size="sm"
                 variant="outline"
                 onClick={() => setPage(Math.max(safePage - 1, 1))}
                 disabled={safePage <= 1}
               >
-                Prev
+                {zh ? "上一页" : "Prev"}
               </Button>
               <Button
                 size="sm"
@@ -358,7 +390,7 @@ export function TimelinePanel({ snapshot, onSelectRequest }: TimelinePanelProps)
                 onClick={() => setPage(Math.min(safePage + 1, totalPages))}
                 disabled={safePage >= totalPages}
               >
-                Next
+                {zh ? "下一页" : "Next"}
               </Button>
             </div>
           </div>
@@ -369,6 +401,7 @@ export function TimelinePanel({ snapshot, onSelectRequest }: TimelinePanelProps)
                 request={request}
                 durationMs={snapshot.durationMs}
                 currentTimeMs={snapshot.currentTimeMs}
+                locale={locale}
                 onSelect={() => onSelectRequest(request.id)}
               />
             ))}
@@ -377,7 +410,7 @@ export function TimelinePanel({ snapshot, onSelectRequest }: TimelinePanelProps)
 
         <div className="rounded-xl border border-[color:var(--border)]">
           <div className="border-b border-[color:var(--border)] px-4 py-3">
-            <p className="text-sm font-semibold">Event Feed</p>
+            <p className="text-sm font-semibold">{zh ? "事件流" : "Event Feed"}</p>
           </div>
           <div className="max-h-[180px] divide-y divide-[color:var(--border)] overflow-y-auto">
             {snapshot.systemEvents.map((event) => (
@@ -388,7 +421,7 @@ export function TimelinePanel({ snapshot, onSelectRequest }: TimelinePanelProps)
                 <div>
                   <p>{event.label}</p>
                   <p className="text-xs text-[color:var(--muted-foreground)]">
-                    {event.requestId ?? "system"}
+                    {event.requestId ?? (zh ? "系统" : "system")}
                     {event.nodeId ? ` | ${event.nodeId}` : ""}
                   </p>
                 </div>

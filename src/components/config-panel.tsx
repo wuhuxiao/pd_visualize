@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Save, Trash2 } from "lucide-react";
 
+import { formatLocaleDateTime, type UiLocale } from "@/lib/i18n";
 import type {
   ArrivalPattern,
   ConfigTemplate,
@@ -23,6 +24,7 @@ import { Label } from "@/components/ui/label";
 interface ConfigPanelProps {
   config: SimulationConfig;
   templates: ConfigTemplate[];
+  locale: UiLocale;
   onChange: <K extends keyof SimulationConfig>(
     key: K,
     value: SimulationConfig[K],
@@ -95,6 +97,7 @@ function ArrivalSelectField({
         value={value}
         onChange={(event) => onChange(event.target.value as ArrivalPattern)}
       >
+        <option value="aisbench_request_rate">aisbench_request_rate</option>
         <option value="uniform_interval">uniform_interval</option>
         <option value="burst_per_sec">burst_per_sec</option>
       </select>
@@ -105,6 +108,7 @@ function ArrivalSelectField({
 export function ConfigPanel({
   config,
   templates,
+  locale,
   onChange,
   onApply,
   onRestoreDefaults,
@@ -113,24 +117,26 @@ export function ConfigPanel({
   onDeleteTemplate,
 }: ConfigPanelProps) {
   const [templateName, setTemplateName] = useState("");
+  const zh = locale === "zh-CN";
 
   return (
     <Card className="h-full">
       <CardHeader>
-        <CardTitle>Config</CardTitle>
+        <CardTitle>{zh ? "配置" : "Config"}</CardTitle>
         <CardDescription>
-          All core parameters are editable. Apply rebuilds the simulation. Save
-          template stores the current draft locally in the browser.
+          {zh
+            ? "所有核心参数都可编辑。点击应用会按当前草稿重建仿真。保存模板会将当前配置存到浏览器本地。`aisbench_request_rate` 模式下，`request_rate` 和 `batch_size` 遵循 AISBench 风格的客户端发流与并发语义。"
+            : "All core parameters are editable. Apply rebuilds the simulation. Save template stores the current draft locally in the browser. In `aisbench_request_rate` mode, `request_rate` and `batch_size` follow AISBench-style client release and concurrency semantics."}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
         <div className="space-y-3">
           <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">
-            Templates
+            {zh ? "模板" : "Templates"}
           </h4>
           <div className="flex gap-2">
             <Input
-              placeholder="template name"
+              placeholder={zh ? "模板名称" : "template name"}
               value={templateName}
               onChange={(event) => setTemplateName(event.target.value)}
             />
@@ -142,13 +148,13 @@ export function ConfigPanel({
               }}
             >
               <Save className="h-4 w-4" />
-              Save
+              {zh ? "保存" : "Save"}
             </Button>
           </div>
           <div className="max-h-48 space-y-2 overflow-y-auto rounded-xl border border-[color:var(--border)] p-2">
             {templates.length === 0 ? (
               <p className="px-2 py-3 text-sm text-[color:var(--muted-foreground)]">
-                No saved templates yet.
+                {zh ? "还没有保存的模板。" : "No saved templates yet."}
               </p>
             ) : (
               templates.map((template) => (
@@ -160,7 +166,8 @@ export function ConfigPanel({
                     <div>
                       <p className="text-sm font-semibold">{template.name}</p>
                       <p className="mt-1 font-mono text-[11px] text-[color:var(--muted-foreground)]">
-                        updated {new Date(template.updatedAt).toLocaleString()}
+                        {zh ? "更新于 " : "updated "}
+                        {formatLocaleDateTime(template.updatedAt, locale)}
                       </p>
                     </div>
                     <Button
@@ -178,7 +185,7 @@ export function ConfigPanel({
                       className="flex-1"
                       onClick={() => onLoadTemplate(template)}
                     >
-                      Load
+                      {zh ? "加载" : "Load"}
                     </Button>
                   </div>
                 </div>
@@ -189,18 +196,24 @@ export function ConfigPanel({
 
         <div className="space-y-3">
           <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">
-            Workload
+            {zh ? "工作负载" : "Workload"}
           </h4>
           <div className="grid gap-3 sm:grid-cols-2">
             <NumberField
               id="reqPerSec"
-              label="req_per_sec"
+              label="request_rate"
               value={config.reqPerSec}
               onChange={(value) => onChange("reqPerSec", value)}
             />
             <ArrivalSelectField
               value={config.arrivalPattern}
               onChange={(value) => onChange("arrivalPattern", value)}
+            />
+            <NumberField
+              id="clientBatchSize"
+              label="batch_size"
+              value={config.clientBatchSize}
+              onChange={(value) => onChange("clientBatchSize", value)}
             />
             <NumberField
               id="maxRequestCount"
@@ -222,7 +235,7 @@ export function ConfigPanel({
             />
             <NumberField
               id="outputTokensPerRequest"
-              label="output_tokens_per_request"
+              label="max_out_len"
               value={config.outputTokensPerRequest}
               onChange={(value) => onChange("outputTokensPerRequest", value)}
             />
@@ -237,7 +250,7 @@ export function ConfigPanel({
 
         <div className="space-y-3">
           <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">
-            Topology
+            {zh ? "拓扑" : "Topology"}
           </h4>
           <div className="grid gap-3 sm:grid-cols-2">
             <NumberField
@@ -274,7 +287,7 @@ export function ConfigPanel({
 
         <div className="space-y-3">
           <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">
-            Service Time
+            {zh ? "服务时间" : "Service Time"}
           </h4>
           <div className="grid gap-3 sm:grid-cols-2">
             <NumberField
@@ -312,7 +325,7 @@ export function ConfigPanel({
 
         <div className="space-y-3">
           <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">
-            Network
+            {zh ? "网络" : "Network"}
           </h4>
           <div className="grid gap-3 sm:grid-cols-2">
             <NumberField
@@ -348,10 +361,10 @@ export function ConfigPanel({
 
         <div className="flex gap-2">
           <Button className="flex-1" onClick={onApply}>
-            Apply & Reset
+            {zh ? "应用并重置" : "Apply & Reset"}
           </Button>
           <Button variant="outline" className="flex-1" onClick={onRestoreDefaults}>
-            Defaults
+            {zh ? "恢复默认" : "Defaults"}
           </Button>
         </div>
       </CardContent>

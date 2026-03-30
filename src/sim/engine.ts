@@ -25,7 +25,7 @@ import type {
 } from "@/types/simulation";
 
 type EventType =
-  | "generate_request"
+  | "client_dispatch_tick"
   | "request_at_coordinator"
   | "request_at_prefill"
   | "prefill_batch_complete"
@@ -84,6 +84,9 @@ export class SimulationEngine {
   private eventCounter = 0;
   private requestCounter = 0;
   private transferCounter = 0;
+  private nextClientReleaseIndex = 0;
+  private activeClientRequests = 0;
+  private scheduledClientDispatchAtMs?: number;
   private coordinatorDispatchCount = 0;
   private clientCompletedCount = 0;
   private roundRobinCursor = {
@@ -102,10 +105,18 @@ export class SimulationEngine {
   private readonly prefillNodeIds: string[] = [];
   private readonly decodeNodeIds: string[] = [];
   private readonly inputEvents: Array<{ timeMs: number; tokens: number }> = [];
+  private readonly prefillEvents: Array<{ timeMs: number; tokens: number }> = [];
   private readonly outputEvents: Array<{ timeMs: number; tokens: number }> = [];
   private readonly completionEvents: number[] = [];
+  private readonly requestReleaseScheduleMs: number[] = [];
   private readonly realtimeSeries: MetricSeriesPoint[] = [];
+  private readonly realtimeQueueSeries: QueueSeriesPoint[] = [];
+  private readonly realtimeBatchSeries: QueueSeriesPoint[] = [];
   private readonly systemEvents: SystemEvent[] = [];
+  private cachedFinalSeries: ReturnType<typeof buildBucketSeries> = [];
+  private cachedFinalQueueSeries: QueueSeriesPoint[] = [];
+  private cachedFinalBatchSeries: QueueSeriesPoint[] = [];
+  private lastFinalSeriesSecond = -1;
 
   constructor(config: SimulationConfig = DEFAULT_SIMULATION_CONFIG) {
     this.config = config;
@@ -130,6 +141,9 @@ export class SimulationEngine {
     this.eventCounter = 0;
     this.requestCounter = 0;
     this.transferCounter = 0;
+    this.nextClientReleaseIndex = 0;
+    this.activeClientRequests = 0;
+    this.scheduledClientDispatchAtMs = undefined;
     this.coordinatorDispatchCount = 0;
     this.clientCompletedCount = 0;
     this.roundRobinCursor = {
@@ -143,10 +157,18 @@ export class SimulationEngine {
     this.prefillNodeIds.length = 0;
     this.decodeNodeIds.length = 0;
     this.inputEvents.length = 0;
+    this.prefillEvents.length = 0;
     this.outputEvents.length = 0;
     this.completionEvents.length = 0;
+    this.requestReleaseScheduleMs.length = 0;
     this.realtimeSeries.length = 0;
+    this.realtimeQueueSeries.length = 0;
+    this.realtimeBatchSeries.length = 0;
     this.systemEvents.length = 0;
+    this.cachedFinalSeries = [];
+    this.cachedFinalQueueSeries = [];
+    this.cachedFinalBatchSeries = [];
+    this.lastFinalSeriesSecond = -1;
     this.bootstrap();
   }
 
@@ -156,7 +178,13 @@ export class SimulationEngine {
     }
 
     const nextEvent = this.queue.peek();
-    if (!nextEvent || nextEvent.timeMs > this.durationMs) {
+    if (!nextEvent) {
+      this.hasFinished = this.shouldStopAfterAllRequestsComplete();
+      this.captureSample();
+      return this.getSnapshot();
+    }
+
+    if (nextEvent.timeMs > this.durationMs) {
       this.currentTimeMs = this.durationMs;
       this.hasFinished = true;
       this.captureSample();
@@ -173,7 +201,10 @@ export class SimulationEngine {
     this.handleEvent(event);
     this.captureSample();
 
-    if (this.currentTimeMs >= this.durationMs) {
+    if (
+      this.currentTimeMs >= this.durationMs ||
+      this.shouldStopAfterAllRequestsComplete()
+    ) {
       this.hasFinished = true;
     }
 
@@ -208,6 +239,10 @@ export class SimulationEngine {
       this.hasFinished = true;
     }
 
+    if (this.shouldStopAfterAllRequestsComplete()) {
+      this.hasFinished = true;
+    }
+
     return this.getSnapshot();
   }
 
@@ -221,11 +256,14 @@ export class SimulationEngine {
             ttftMs: metrics.ttftMs,
             tpotMs: metrics.tpotMs,
             e2eLatencyMs: metrics.e2eLatencyMs,
+            outputTokenThroughputTokPerSec:
+              metrics.outputTokenThroughputTokPerSec,
           },
         };
       })
       .sort((a, b) => a.sequence - b.sequence);
-    const elapsedSeconds = Math.max(this.currentTimeMs / 1000, 0.001);
+    const benchmarkDurationMs = this.calculateBenchmarkDurationMs(requestList);
+    const elapsedSeconds = Math.max(benchmarkDurationMs / 1000, 0.001);
     const completedRequests = requestList.filter(
       (request) => request.finishTimeMs !== undefined,
     );
@@ -239,6 +277,7 @@ export class SimulationEngine {
         .filter((node) => node.kind === "prefill" || node.kind === "decode")
         .map((node) => [node.id, node.batchSamples]),
     );
+    this.refreshFinalSeriesCache(queueSamplesByNode, batchSamplesByNode);
 
     const metrics: AggregateMetrics = {
       totalRequests: requestList.length,
@@ -247,8 +286,16 @@ export class SimulationEngine {
       totalInputTokens: this.sumTokens(this.inputEvents),
       totalOutputTokens: this.sumTokens(this.outputEvents),
       systemInputThroughput: this.sumTokens(this.inputEvents) / elapsedSeconds,
+      prefillTokenThroughput: this.calculatePrefillTokenThroughput(requestList),
       systemOutputThroughput: this.sumTokens(this.outputEvents) / elapsedSeconds,
+      totalTokenThroughput:
+        (this.sumTokens(this.inputEvents) + this.sumTokens(this.outputEvents)) /
+        elapsedSeconds,
       requestThroughput: completedRequests.length / elapsedSeconds,
+      benchmarkDurationMs,
+      failedRequests: requestList.length - completedRequests.length,
+      concurrency: this.calculateConcurrency(completedRequests, requestList),
+      maxConcurrency: this.config.clientBatchSize,
       ttft: summarize(
         completedRequests
           .map((request) => request.metrics.ttftMs)
@@ -264,6 +311,12 @@ export class SimulationEngine {
           .map((request) => request.metrics.e2eLatencyMs)
           .filter((value): value is number => value !== undefined),
       ),
+      outputTokenThroughput: summarize(
+        completedRequests
+          .map((request) => request.metrics.outputTokenThroughputTokPerSec)
+          .filter((value): value is number => value !== undefined),
+      ),
+      totalPrefillTokens: this.sumTokens(this.prefillEvents),
     };
 
     return {
@@ -286,22 +339,11 @@ export class SimulationEngine {
       })),
       metrics,
       realtimeSeries: [...this.realtimeSeries],
-      finalSeries: buildBucketSeries(
-        Math.max(this.currentTimeMs, 1),
-        this.inputEvents,
-        this.outputEvents,
-        this.completionEvents,
-      ),
-      realtimeQueueSeries: this.buildRealtimeQueueSeries(),
-      finalQueueSeries: buildQueueBucketSeries(
-        Math.max(this.currentTimeMs, 1),
-        queueSamplesByNode,
-      ),
-      realtimeBatchSeries: this.buildRealtimeBatchSeries(),
-      finalBatchSeries: buildNodeValueBucketSeries(
-        Math.max(this.currentTimeMs, 1),
-        batchSamplesByNode,
-      ),
+      finalSeries: this.cachedFinalSeries,
+      realtimeQueueSeries: [...this.realtimeQueueSeries],
+      finalQueueSeries: this.cachedFinalQueueSeries,
+      realtimeBatchSeries: [...this.realtimeBatchSeries],
+      finalBatchSeries: this.cachedFinalBatchSeries,
       ttftSeries: requestList.map(computeRequestMetrics),
       tpotSeries: requestList.map(computeRequestMetrics),
       systemEvents: [...this.systemEvents],
@@ -324,7 +366,9 @@ export class SimulationEngine {
       this.decodeNodeIds.push(nodeId);
     }
 
-    this.scheduleArrivals();
+    this.initializeRealtimeNodeSeries();
+    this.buildRequestReleaseSchedule();
+    this.scheduleClientDispatch();
     this.captureSample();
   }
 
@@ -343,18 +387,27 @@ export class SimulationEngine {
     });
   }
 
-  private scheduleArrivals() {
-    if (this.config.arrivalPattern === "uniform_interval") {
-      let timeMs = 0;
-      let generated = 0;
-      const intervalMs = 1000 / this.config.reqPerSec;
-
-      while (timeMs <= this.durationMs && generated < this.config.maxRequestCount) {
-        this.enqueue({ timeMs, type: "generate_request" });
-        generated += 1;
-        timeMs += intervalMs;
+  private buildRequestReleaseSchedule() {
+    if (this.config.arrivalPattern === "aisbench_request_rate") {
+      if (this.config.reqPerSec < 0.1) {
+        for (let index = 0; index < this.config.maxRequestCount; index += 1) {
+          this.requestReleaseScheduleMs.push(0);
+        }
+        return;
       }
 
+      const intervalMs = 1000 / this.config.reqPerSec;
+      for (let index = 0; index < this.config.maxRequestCount; index += 1) {
+        this.requestReleaseScheduleMs.push(index * intervalMs);
+      }
+      return;
+    }
+
+    if (this.config.arrivalPattern === "uniform_interval") {
+      const intervalMs = 1000 / this.config.reqPerSec;
+      for (let index = 0; index < this.config.maxRequestCount; index += 1) {
+        this.requestReleaseScheduleMs.push(index * intervalMs);
+      }
       return;
     }
 
@@ -362,10 +415,7 @@ export class SimulationEngine {
     let generated = 0;
     let carry = 0;
 
-    while (
-      secondMarkMs <= this.durationMs &&
-      generated < this.config.maxRequestCount
-    ) {
+    while (generated < this.config.maxRequestCount) {
       carry += this.config.reqPerSec;
       const toEmit = Math.min(
         Math.floor(carry + 1e-9),
@@ -374,12 +424,41 @@ export class SimulationEngine {
 
       carry -= toEmit;
       for (let index = 0; index < toEmit; index += 1) {
-        this.enqueue({ timeMs: secondMarkMs, type: "generate_request" });
+        this.requestReleaseScheduleMs.push(secondMarkMs);
         generated += 1;
       }
 
       secondMarkMs += 1000;
     }
+  }
+
+  private scheduleClientDispatch() {
+    if (this.activeClientRequests >= this.config.clientBatchSize) {
+      return;
+    }
+
+    if (this.nextClientReleaseIndex >= this.requestReleaseScheduleMs.length) {
+      return;
+    }
+
+    const nextReleaseTimeMs = Math.max(
+      this.requestReleaseScheduleMs[this.nextClientReleaseIndex],
+      this.currentTimeMs,
+    );
+
+    if (nextReleaseTimeMs > this.durationMs) {
+      return;
+    }
+
+    if (this.scheduledClientDispatchAtMs === nextReleaseTimeMs) {
+      return;
+    }
+
+    this.scheduledClientDispatchAtMs = nextReleaseTimeMs;
+    this.enqueue({
+      timeMs: nextReleaseTimeMs,
+      type: "client_dispatch_tick",
+    });
   }
 
   private enqueue(event: Omit<SimulationEvent, "id" | "seq">) {
@@ -412,8 +491,9 @@ export class SimulationEngine {
 
   private handleEvent(event: SimulationEvent) {
     switch (event.type) {
-      case "generate_request":
-        this.handleGenerateRequest();
+      case "client_dispatch_tick":
+        this.scheduledClientDispatchAtMs = undefined;
+        this.handleClientDispatchTick();
         break;
       case "request_at_coordinator":
         this.finishTransfer(event.transferId);
@@ -442,24 +522,39 @@ export class SimulationEngine {
     }
   }
 
-  private handleGenerateRequest() {
-    const request = this.createRequest(this.currentTimeMs);
-    request.status = "to_coordinator";
-    this.inputEvents.push({
-      timeMs: this.currentTimeMs,
-      tokens: request.inputTokens,
-    });
-    this.appendRequestEvent(request, "arrival", "Client received request");
-    this.appendSystemEvent(`Client emitted ${request.id}`, request.id, "client");
-    this.transferRequest(
-      request.id,
-      "client",
-      "coordinator",
-      "request",
-      0,
-      this.config.networkLatencyClientToCoordinatorMs,
-      "request_at_coordinator",
-    );
+  private handleClientDispatchTick() {
+    while (
+      this.activeClientRequests < this.config.clientBatchSize &&
+      this.nextClientReleaseIndex < this.requestReleaseScheduleMs.length
+    ) {
+      const releaseTimeMs =
+        this.requestReleaseScheduleMs[this.nextClientReleaseIndex];
+      if (releaseTimeMs > this.currentTimeMs || releaseTimeMs > this.durationMs) {
+        break;
+      }
+
+      const request = this.createRequest(this.currentTimeMs);
+      request.status = "to_coordinator";
+      this.activeClientRequests += 1;
+      this.nextClientReleaseIndex += 1;
+      this.inputEvents.push({
+        timeMs: this.currentTimeMs,
+        tokens: request.inputTokens,
+      });
+      this.appendRequestEvent(request, "arrival", "Client received request");
+      this.appendSystemEvent(`Client emitted ${request.id}`, request.id, "client");
+      this.transferRequest(
+        request.id,
+        "client",
+        "coordinator",
+        "request",
+        0,
+        this.config.networkLatencyClientToCoordinatorMs,
+        "request_at_coordinator",
+      );
+    }
+
+    this.scheduleClientDispatch();
   }
 
   private handleRequestAtCoordinator(requestId?: string) {
@@ -528,6 +623,10 @@ export class SimulationEngine {
       const request = this.getRequest(requestId);
       request.prefillEndTimeMs = this.currentTimeMs;
       request.status = "to_decode";
+      this.prefillEvents.push({
+        timeMs: this.currentTimeMs,
+        tokens: request.inputTokens,
+      });
       node.processedCount += 1;
       this.appendRequestEvent(request, "complete", `${nodeId} completed prefill`);
       const decodeNodeId = this.selectNode(
@@ -657,9 +756,11 @@ export class SimulationEngine {
       request.finishTimeMs = this.currentTimeMs;
       request.status = "completed";
       this.clientCompletedCount += 1;
+      this.activeClientRequests = Math.max(this.activeClientRequests - 1, 0);
       this.completionEvents.push(this.currentTimeMs);
       this.appendRequestEvent(request, "finish", "Request completed at client");
       this.appendSystemEvent(`${request.id} completed`, request.id, "client");
+      this.handleClientDispatchTick();
     } else {
       request.status = "streaming";
     }
@@ -898,26 +999,36 @@ export class SimulationEngine {
     const lastSample = node.queueSamples[node.queueSamples.length - 1];
     if (lastSample && lastSample.timeMs === this.currentTimeMs) {
       lastSample.value = node.queue.length;
-      return;
+    } else {
+      node.queueSamples.push({
+        timeMs: this.currentTimeMs,
+        value: node.queue.length,
+      });
     }
 
-    node.queueSamples.push({
-      timeMs: this.currentTimeMs,
-      value: node.queue.length,
-    });
+    this.upsertRealtimeNodeSeries(
+      this.realtimeQueueSeries,
+      node.id,
+      node.queue.length,
+    );
   }
 
   private recordBatchSample(node: NodeRuntime) {
     const lastSample = node.batchSamples[node.batchSamples.length - 1];
     if (lastSample && lastSample.timeMs === this.currentTimeMs) {
       lastSample.value = node.currentRequestIds.length;
-      return;
+    } else {
+      node.batchSamples.push({
+        timeMs: this.currentTimeMs,
+        value: node.currentRequestIds.length,
+      });
     }
 
-    node.batchSamples.push({
-      timeMs: this.currentTimeMs,
-      value: node.currentRequestIds.length,
-    });
+    this.upsertRealtimeNodeSeries(
+      this.realtimeBatchSeries,
+      node.id,
+      node.currentRequestIds.length,
+    );
   }
 
   private appendRequestEvent(
@@ -983,81 +1094,58 @@ export class SimulationEngine {
       .sort((a, b) => a.id.localeCompare(b.id));
   }
 
-  private buildRealtimeQueueSeries() {
-    const allTimes = new Set<number>([0, this.currentTimeMs]);
-    const queueSamplesByNode: Record<string, TimeValueSample[]> = {};
+  private initializeRealtimeNodeSeries() {
+    const queuePoint: QueueSeriesPoint = { timeMs: 0 };
+    const batchPoint: QueueSeriesPoint = { timeMs: 0 };
 
     for (const node of this.nodes.values()) {
       if (node.kind !== "prefill" && node.kind !== "decode") {
         continue;
       }
 
-      queueSamplesByNode[node.id] = node.queueSamples;
-      for (const sample of node.queueSamples) {
-        allTimes.add(sample.timeMs);
-      }
+      queuePoint[node.id] = 0;
+      batchPoint[node.id] = 0;
     }
 
-    return [...allTimes]
-      .sort((a, b) => a - b)
-      .map((timeMs) => {
-        const point: QueueSeriesPoint = { timeMs };
-        for (const [nodeId, samples] of Object.entries(queueSamplesByNode)) {
-          let value = samples[0]?.value ?? 0;
-          for (const sample of samples) {
-            if (sample.timeMs > timeMs) {
-              break;
-            }
-            value = sample.value;
-          }
-          point[nodeId] = value;
-        }
-        return point;
-      });
+    this.realtimeQueueSeries.push(queuePoint);
+    this.realtimeBatchSeries.push(batchPoint);
   }
 
-  private buildRealtimeBatchSeries() {
-    const allTimes = new Set<number>([0, this.currentTimeMs]);
-    const batchSamplesByNode: Record<string, TimeValueSample[]> = {};
-
-    for (const node of this.nodes.values()) {
-      if (node.kind !== "prefill" && node.kind !== "decode") {
-        continue;
-      }
-
-      batchSamplesByNode[node.id] = node.batchSamples;
-      for (const sample of node.batchSamples) {
-        allTimes.add(sample.timeMs);
-      }
+  private upsertRealtimeNodeSeries(
+    series: QueueSeriesPoint[],
+    nodeId: string,
+    value: number,
+  ) {
+    const lastPoint = series[series.length - 1];
+    if (lastPoint && lastPoint.timeMs === this.currentTimeMs) {
+      lastPoint[nodeId] = value;
+      return;
     }
 
-    return [...allTimes]
-      .sort((a, b) => a - b)
-      .map((timeMs) => {
-        const point: QueueSeriesPoint = { timeMs };
-        for (const [nodeId, samples] of Object.entries(batchSamplesByNode)) {
-          let value = samples[0]?.value ?? 0;
-          for (const sample of samples) {
-            if (sample.timeMs > timeMs) {
-              break;
-            }
-            value = sample.value;
-          }
-          point[nodeId] = value;
-        }
-        return point;
-      });
+    series.push({
+      ...(lastPoint ?? { timeMs: this.currentTimeMs }),
+      timeMs: this.currentTimeMs,
+      [nodeId]: value,
+    });
   }
 
   private captureSample() {
     const elapsedSeconds = Math.max(this.currentTimeMs / 1000, 0.001);
+    const totalInputTokens = this.sumTokens(this.inputEvents);
+    const totalPrefillTokens = this.sumTokens(this.prefillEvents);
+    const totalOutputTokens = this.sumTokens(this.outputEvents);
     const point: MetricSeriesPoint = {
       timeMs: this.currentTimeMs,
-      inputThroughput: this.sumTokens(this.inputEvents) / elapsedSeconds,
-      outputThroughput: this.sumTokens(this.outputEvents) / elapsedSeconds,
+      inputThroughput: totalInputTokens / elapsedSeconds,
+      prefillTokenThroughput: totalPrefillTokens / elapsedSeconds,
+      outputThroughput: totalOutputTokens / elapsedSeconds,
+      totalTokenThroughput:
+        (totalInputTokens + totalOutputTokens) / elapsedSeconds,
       requestThroughput: this.completionEvents.length / elapsedSeconds,
-      inputTokens: this.sumTokens(this.inputEvents),
-      outputTokens: this.sumTokens(this.outputEvents),
+      inputTokens: totalInputTokens,
+      prefillTokens: totalPrefillTokens,
+      outputTokens: totalOutputTokens,
+      totalTokens: totalInputTokens + totalOutputTokens,
       completedRequests: this.completionEvents.length,
     };
 
@@ -1072,6 +1160,102 @@ export class SimulationEngine {
 
   private sumTokens(events: Array<{ timeMs: number; tokens: number }>) {
     return events.reduce((sum, event) => sum + event.tokens, 0);
+  }
+
+  private calculateBenchmarkDurationMs(requests: RequestRecord[]) {
+    if (requests.length === 0) {
+      return this.currentTimeMs;
+    }
+
+    const startTimeMs = Math.min(...requests.map((request) => request.arrivalTimeMs));
+    const endTimeMs = Math.max(
+      ...requests.map((request) => request.finishTimeMs ?? this.currentTimeMs),
+    );
+    return Math.max(endTimeMs - startTimeMs, 0);
+  }
+
+  private calculatePrefillTokenThroughput(requests: RequestRecord[]) {
+    const requestsWithTtft = requests.filter(
+      (request) => request.metrics.ttftMs !== undefined,
+    );
+
+    if (requestsWithTtft.length === 0) {
+      return 0;
+    }
+
+    const totalInputTokens = requestsWithTtft.reduce(
+      (sum, request) => sum + request.inputTokens,
+      0,
+    );
+    const totalTtftSeconds =
+      requestsWithTtft.reduce(
+        (sum, request) => sum + (request.metrics.ttftMs ?? 0),
+        0,
+      ) / 1000;
+
+    if (totalTtftSeconds <= 0) {
+      return 0;
+    }
+
+    return totalInputTokens / totalTtftSeconds;
+  }
+
+  private calculateConcurrency(
+    completedRequests: RequestRecord[],
+    allRequests: RequestRecord[],
+  ) {
+    const benchmarkDurationSeconds =
+      this.calculateBenchmarkDurationMs(allRequests) / 1000;
+
+    if (benchmarkDurationSeconds <= 0 || completedRequests.length === 0) {
+      return 0;
+    }
+
+    const totalE2eSeconds =
+      completedRequests.reduce(
+        (sum, request) => sum + ((request.metrics.e2eLatencyMs ?? 0) / 1000),
+        0,
+      );
+
+    return totalE2eSeconds / benchmarkDurationSeconds;
+  }
+
+  private refreshFinalSeriesCache(
+    queueSamplesByNode: Record<string, TimeValueSample[]>,
+    batchSamplesByNode: Record<string, TimeValueSample[]>,
+  ) {
+    const currentSecond = Math.floor(this.currentTimeMs / 1000);
+    if (currentSecond === this.lastFinalSeriesSecond && !this.hasFinished) {
+      return;
+    }
+
+    const durationMs = Math.max(this.currentTimeMs, 1);
+    this.cachedFinalSeries = buildBucketSeries(
+      durationMs,
+      this.inputEvents,
+      this.prefillEvents,
+      this.outputEvents,
+      this.completionEvents,
+    );
+    this.cachedFinalQueueSeries = buildQueueBucketSeries(
+      durationMs,
+      queueSamplesByNode,
+    );
+    this.cachedFinalBatchSeries = buildNodeValueBucketSeries(
+      durationMs,
+      batchSamplesByNode,
+    );
+    this.lastFinalSeriesSecond = currentSecond;
+  }
+
+  private shouldStopAfterAllRequestsComplete() {
+    return (
+      this.nextClientReleaseIndex >= this.requestReleaseScheduleMs.length &&
+      this.requests.size > 0 &&
+      [...this.requests.values()].every(
+        (request) => request.status === "completed",
+      )
+    );
   }
 
   private getRequest(requestId: string) {

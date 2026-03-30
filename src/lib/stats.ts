@@ -78,6 +78,8 @@ export function computeRequestMetrics(
     request.finishTimeMs !== undefined
       ? request.finishTimeMs - request.arrivalTimeMs
       : undefined;
+  const outputTokenThroughputTokPerSec =
+    tpotMs !== undefined && tpotMs > 0 ? 1000 / tpotMs : undefined;
 
   return {
     requestId: request.id,
@@ -86,6 +88,7 @@ export function computeRequestMetrics(
     ttftMs,
     tpotMs,
     e2eLatencyMs,
+    outputTokenThroughputTokPerSec,
     status: request.status,
   };
 }
@@ -93,6 +96,7 @@ export function computeRequestMetrics(
 export function buildBucketSeries(
   durationMs: number,
   inputEvents: Array<{ timeMs: number; tokens: number }>,
+  prefillEvents: Array<{ timeMs: number; tokens: number }>,
   outputEvents: Array<{ timeMs: number; tokens: number }>,
   completionEvents: number[],
 ): BucketSeriesPoint[] {
@@ -100,10 +104,14 @@ export function buildBucketSeries(
   const buckets = Array.from({ length: bucketCount }, (_, index) => ({
     second: index,
     inputTokens: 0,
+    prefillTokens: 0,
     outputTokens: 0,
+    totalTokens: 0,
     completedRequests: 0,
     inputThroughput: 0,
+    prefillTokenThroughput: 0,
     outputThroughput: 0,
+    totalTokenThroughput: 0,
     requestThroughput: 0,
   }));
 
@@ -117,6 +125,11 @@ export function buildBucketSeries(
     buckets[index].outputTokens += event.tokens;
   }
 
+  for (const event of prefillEvents) {
+    const index = Math.min(bucketCount - 1, Math.floor(event.timeMs / 1000));
+    buckets[index].prefillTokens += event.tokens;
+  }
+
   for (const timeMs of completionEvents) {
     const index = Math.min(bucketCount - 1, Math.floor(timeMs / 1000));
     buckets[index].completedRequests += 1;
@@ -124,8 +137,11 @@ export function buildBucketSeries(
 
   return buckets.map((bucket) => ({
     ...bucket,
+    totalTokens: bucket.inputTokens + bucket.outputTokens,
     inputThroughput: bucket.inputTokens,
+    prefillTokenThroughput: bucket.prefillTokens,
     outputThroughput: bucket.outputTokens,
+    totalTokenThroughput: bucket.inputTokens + bucket.outputTokens,
     requestThroughput: bucket.completedRequests,
   }));
 }

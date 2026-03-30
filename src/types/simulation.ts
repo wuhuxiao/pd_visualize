@@ -3,7 +3,10 @@ export type DispatchPolicy =
   | "shortest_queue"
   | "least_loaded";
 
-export type ArrivalPattern = "burst_per_sec" | "uniform_interval";
+export type ArrivalPattern =
+  | "aisbench_request_rate"
+  | "burst_per_sec"
+  | "uniform_interval";
 
 export type PlaybackState = "idle" | "running" | "paused" | "finished";
 
@@ -34,6 +37,7 @@ export type TransferKind = "request" | "token";
 export interface SimulationConfig {
   reqPerSec: number;
   arrivalPattern: ArrivalPattern;
+  clientBatchSize: number;
   maxRequestCount: number;
   inputTokensPerRequest: number;
   outputTokensPerRequest: number;
@@ -74,6 +78,7 @@ export interface RequestMetrics {
   ttftMs?: number;
   tpotMs?: number;
   e2eLatencyMs?: number;
+  outputTokenThroughputTokPerSec?: number;
 }
 
 export interface RequestRecord {
@@ -146,10 +151,14 @@ export interface SummaryStats {
 export interface MetricSeriesPoint {
   timeMs: number;
   inputThroughput: number;
+  prefillTokenThroughput: number;
   outputThroughput: number;
+  totalTokenThroughput: number;
   requestThroughput: number;
   inputTokens: number;
+  prefillTokens: number;
   outputTokens: number;
+  totalTokens: number;
   completedRequests: number;
 }
 
@@ -161,10 +170,14 @@ export interface QueueSeriesPoint {
 export interface BucketSeriesPoint {
   second: number;
   inputTokens: number;
+  prefillTokens: number;
   outputTokens: number;
+  totalTokens: number;
   completedRequests: number;
   inputThroughput: number;
+  prefillTokenThroughput: number;
   outputThroughput: number;
+  totalTokenThroughput: number;
   requestThroughput: number;
 }
 
@@ -175,6 +188,7 @@ export interface RequestMetricPoint {
   ttftMs?: number;
   tpotMs?: number;
   e2eLatencyMs?: number;
+  outputTokenThroughputTokPerSec?: number;
   status: RequestStatus;
 }
 
@@ -187,17 +201,25 @@ export interface SystemEvent {
 }
 
 export interface AggregateMetrics {
+  benchmarkDurationMs: number;
   totalRequests: number;
   completedRequests: number;
+  failedRequests: number;
   activeRequests: number;
+  concurrency: number;
+  maxConcurrency: number;
   totalInputTokens: number;
+  totalPrefillTokens: number;
   totalOutputTokens: number;
   systemInputThroughput: number;
+  prefillTokenThroughput: number;
   systemOutputThroughput: number;
+  totalTokenThroughput: number;
   requestThroughput: number;
   ttft: SummaryStats;
   tpot: SummaryStats;
   e2eLatency: SummaryStats;
+  outputTokenThroughput: SummaryStats;
 }
 
 export interface SimulationSnapshot {

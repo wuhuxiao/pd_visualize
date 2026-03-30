@@ -1,6 +1,11 @@
 "use client";
 
-import { formatMs, formatTokens } from "@/lib/format";
+import { formatMs, formatThroughput, formatTokens } from "@/lib/format";
+import {
+  type UiLocale,
+  translateRequestEventType,
+  translateRequestStatus,
+} from "@/lib/i18n";
 import type { RequestRecord } from "@/types/simulation";
 import {
   Dialog,
@@ -12,6 +17,7 @@ import {
 
 interface RequestDetailDialogProps {
   request?: RequestRecord;
+  locale: UiLocale;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -29,17 +35,20 @@ function detailRow(label: string, value: string) {
 
 export function RequestDetailDialog({
   request,
+  locale,
   open,
   onOpenChange,
 }: RequestDetailDialogProps) {
+  const zh = locale === "zh-CN";
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[88vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{request?.id ?? "Request details"}</DialogTitle>
+          <DialogTitle>{request?.id ?? (zh ? "请求详情" : "Request details")}</DialogTitle>
           <DialogDescription>
-            Per-request lifecycle trace with the timestamps used to compute TTFT,
-            TPOT, and end-to-end latency.
+            {zh
+              ? "单个请求的生命周期追踪，以及用于计算 TTFT、TPOT 和端到端时延的关键时间戳。"
+              : "Per-request lifecycle trace with the timestamps used to compute TTFT, TPOT, and end-to-end latency."}
           </DialogDescription>
         </DialogHeader>
 
@@ -48,32 +57,55 @@ export function RequestDetailDialog({
             <div className="grid gap-3 md:grid-cols-3">
               {detailRow("TTFT", formatMs(request.metrics.ttftMs))}
               {detailRow("TPOT", formatMs(request.metrics.tpotMs))}
-              {detailRow("E2E", formatMs(request.metrics.e2eLatencyMs))}
-              {detailRow("Input", formatTokens(request.inputTokens))}
+              {detailRow("E2EL", formatMs(request.metrics.e2eLatencyMs))}
               {detailRow(
-                "Output delivered",
-                `${request.outputTokensDelivered}/${request.outputTokensTarget} tok`,
+                zh ? "输出 Token 吞吐" : "OutputTokenThroughput",
+                request.metrics.outputTokenThroughputTokPerSec !== undefined
+                  ? formatThroughput(
+                      request.metrics.outputTokenThroughputTokPerSec,
+                      "tok/s",
+                    )
+                  : "N/A",
               )}
-              {detailRow("Status", request.status)}
+              {detailRow(zh ? "输入" : "Input", formatTokens(request.inputTokens))}
+              {detailRow(
+                zh ? "已返回输出" : "Output delivered",
+                `${request.outputTokensDelivered}/${request.outputTokensTarget} ${
+                  zh ? "tok" : "tok"
+                }`,
+              )}
+              {detailRow(
+                zh ? "状态" : "Status",
+                translateRequestStatus(request.status, locale),
+              )}
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
-              {detailRow("arrival_time", formatMs(request.arrivalTimeMs))}
+              {detailRow(zh ? "到达时间" : "arrival_time", formatMs(request.arrivalTimeMs))}
               {detailRow(
-                "prefill_start_time",
+                zh ? "prefill 开始时间" : "prefill_start_time",
                 formatMs(request.prefillStartTimeMs),
               )}
-              {detailRow("prefill_end_time", formatMs(request.prefillEndTimeMs))}
-              {detailRow("decode_start_time", formatMs(request.decodeStartTimeMs))}
-              {detailRow("first_token_time", formatMs(request.firstTokenTimeMs))}
-              {detailRow("finish_time", formatMs(request.finishTimeMs))}
+              {detailRow(
+                zh ? "prefill 结束时间" : "prefill_end_time",
+                formatMs(request.prefillEndTimeMs),
+              )}
+              {detailRow(
+                zh ? "decode 开始时间" : "decode_start_time",
+                formatMs(request.decodeStartTimeMs),
+              )}
+              {detailRow(
+                zh ? "首个 token 时间" : "first_token_time",
+                formatMs(request.firstTokenTimeMs),
+              )}
+              {detailRow(zh ? "完成时间" : "finish_time", formatMs(request.finishTimeMs))}
             </div>
 
             <div className="rounded-xl border border-[color:var(--border)]">
               <div className="grid grid-cols-[120px_120px_1fr] gap-3 border-b border-[color:var(--border)] bg-[color:var(--secondary)]/50 px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--muted-foreground)]">
-                <span>Time</span>
-                <span>Type</span>
-                <span>Event</span>
+                <span>{zh ? "时间" : "Time"}</span>
+                <span>{zh ? "类型" : "Type"}</span>
+                <span>{zh ? "事件" : "Event"}</span>
               </div>
               <div className="divide-y divide-[color:var(--border)]">
                 {request.timeline.map((event) => (
@@ -83,7 +115,7 @@ export function RequestDetailDialog({
                   >
                     <span className="font-mono">{formatMs(event.timeMs)}</span>
                     <span className="font-mono text-[color:var(--muted-foreground)]">
-                      {event.type}
+                      {translateRequestEventType(event.type, locale)}
                     </span>
                     <div>
                       <p>{event.label}</p>
