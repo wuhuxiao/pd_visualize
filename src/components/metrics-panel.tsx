@@ -5,7 +5,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -50,6 +49,12 @@ interface MetricsPanelProps {
   onChartModeChange: (mode: "realtime" | "final") => void;
 }
 
+interface SeriesControlItem {
+  key: string;
+  label: string;
+  color: string;
+}
+
 function NodeFilter({
   title,
   nodeIds,
@@ -80,6 +85,51 @@ function NodeFilter({
           {nodeId}
         </Button>
       ))}
+    </div>
+  );
+}
+
+function SeriesLegendControl({
+  title,
+  items,
+  selectedKeys,
+  onToggle,
+}: {
+  title: string;
+  items: SeriesControlItem[];
+  selectedKeys: string[];
+  onToggle: (key: string) => void;
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2">
+      <span className="text-xs font-medium text-[color:var(--muted-foreground)]">
+        {title}
+      </span>
+      {items.map((item) => {
+        const active = selectedKeys.includes(item.key);
+        return (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => onToggle(item.key)}
+            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition ${
+              active
+                ? "border-[color:var(--accent-strong)] bg-[color:var(--accent)]/10 text-[color:var(--foreground)]"
+                : "border-[color:var(--border)] text-[color:var(--muted-foreground)]"
+            }`}
+          >
+            <span
+              className="h-2.5 w-2.5 rounded-full"
+              style={{ backgroundColor: item.color }}
+            />
+            {item.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -276,6 +326,21 @@ export function MetricsPanel({
   );
   const [decodeFilter, setDecodeFilter] = useState<string[]>([]);
   const [prefillFilter, setPrefillFilter] = useState<string[]>([]);
+  const [ttftSeriesFilter, setTtftSeriesFilter] = useState<string[]>(["ttftMs"]);
+  const [tpotSeriesFilter, setTpotSeriesFilter] = useState<string[]>(["tpotMs"]);
+  const [outputTokenSeriesFilter, setOutputTokenSeriesFilter] = useState<string[]>([
+    "outputTokenThroughputTokPerSec",
+  ]);
+  const [throughputSeriesFilter, setThroughputSeriesFilter] = useState<string[]>([
+    "prefillTokenThroughput",
+    "inputThroughput",
+    "outputThroughput",
+    "totalTokenThroughput",
+    "requestThroughput",
+  ]);
+  const [queueSeriesFilter, setQueueSeriesFilter] = useState<string[]>([]);
+  const [decodeSeriesFilter, setDecodeSeriesFilter] = useState<string[]>([]);
+  const [prefillSeriesFilter, setPrefillSeriesFilter] = useState<string[]>([]);
   const sampledRealtimeSeries = downsampleSeries(
     snapshot.realtimeSeries,
     MAX_REALTIME_CHART_POINTS,
@@ -358,6 +423,76 @@ export function MetricsPanel({
     prefillFilter.filter((nodeId) => prefillNodeIds.includes(nodeId)).length > 0
       ? prefillFilter.filter((nodeId) => prefillNodeIds.includes(nodeId))
       : prefillNodeIds;
+  const throughputSeries: SeriesControlItem[] = [
+    {
+      key: "prefillTokenThroughput",
+      label: zh ? "Prefill Tok/s" : "Prefill Tok/s",
+      color: "#a16207",
+    },
+    {
+      key: "inputThroughput",
+      label: zh ? "Input Tok/s" : "Input Tok/s",
+      color: "#f59e0b",
+    },
+    {
+      key: "outputThroughput",
+      label: zh ? "Output Tok/s" : "Output Tok/s",
+      color: "#0ea5e9",
+    },
+    {
+      key: "totalTokenThroughput",
+      label: zh ? "Total Tok/s" : "Total Tok/s",
+      color: "#7c3aed",
+    },
+    {
+      key: "requestThroughput",
+      label: zh ? "Req/s" : "Req/s",
+      color: "#10b981",
+    },
+  ];
+  const visibleThroughputKeys =
+    throughputSeriesFilter.filter((key) =>
+      throughputSeries.some((item) => item.key === key),
+    ).length > 0
+      ? throughputSeriesFilter.filter((key) =>
+          throughputSeries.some((item) => item.key === key),
+        )
+      : throughputSeries.map((item) => item.key);
+  const queueSeriesItems: SeriesControlItem[] = queueKeys.map((key, index) => ({
+    key,
+    label: key,
+    color: ["#f59e0b", "#0ea5e9", "#8b5cf6", "#10b981"][index % 4],
+  }));
+  const visibleQueueKeys =
+    queueSeriesFilter.filter((key) => queueKeys.includes(key)).length > 0
+      ? queueSeriesFilter.filter((key) => queueKeys.includes(key))
+      : queueKeys;
+  const ttftSeriesItems: SeriesControlItem[] = [
+    { key: "ttftMs", label: "TTFT", color: "#0f766e" },
+  ];
+  const visibleTtftKeys =
+    ttftSeriesFilter.includes("ttftMs") || ttftSeriesFilter.length === 0
+      ? ["ttftMs"]
+      : [];
+  const tpotSeriesItems: SeriesControlItem[] = [
+    { key: "tpotMs", label: "TPOT", color: "#2563eb" },
+  ];
+  const visibleTpotKeys =
+    tpotSeriesFilter.includes("tpotMs") || tpotSeriesFilter.length === 0
+      ? ["tpotMs"]
+      : [];
+  const outputTokenSeriesItems: SeriesControlItem[] = [
+    {
+      key: "outputTokenThroughputTokPerSec",
+      label: zh ? "OutTok/s" : "OutTok/s",
+      color: "#7c3aed",
+    },
+  ];
+  const visibleOutputTokenKeys =
+    outputTokenSeriesFilter.includes("outputTokenThroughputTokPerSec") ||
+    outputTokenSeriesFilter.length === 0
+      ? ["outputTokenThroughputTokPerSec"]
+      : [];
   const ttftData = snapshot.ttftSeries
     .filter((point) => point.ttftMs !== undefined)
     .map((point) => ({
@@ -411,16 +546,66 @@ export function MetricsPanel({
 
       return combined;
     });
+  const decodeSeriesItems: SeriesControlItem[] = selectedDecodeNodeIds.map(
+    (nodeId, index) => ({
+      key: nodeId,
+      label: nodeId,
+      color: ["#0ea5e9", "#2563eb", "#8b5cf6", "#14b8a6"][index % 4],
+    }),
+  );
+  const visibleDecodeKeys =
+    decodeSeriesFilter.filter((key) =>
+      selectedDecodeNodeIds.includes(key),
+    ).length > 0
+      ? decodeSeriesFilter.filter((key) => selectedDecodeNodeIds.includes(key))
+      : selectedDecodeNodeIds;
+  const prefillSeriesItems: SeriesControlItem[] = selectedPrefillNodeIds.flatMap(
+    (nodeId, index) => [
+      {
+        key: `${nodeId}_queue`,
+        label: `${nodeId} queue`,
+        color: ["#f59e0b", "#d97706", "#b45309", "#92400e"][index % 4],
+      },
+      {
+        key: `${nodeId}_batch`,
+        label: `${nodeId} batch`,
+        color: ["#10b981", "#059669", "#0d9488", "#0f766e"][index % 4],
+      },
+    ],
+  );
+  const visiblePrefillSeriesKeys =
+    prefillSeriesFilter.filter((key) =>
+      prefillSeriesItems.some((item) => item.key === key),
+    ).length > 0
+      ? prefillSeriesFilter.filter((key) =>
+          prefillSeriesItems.some((item) => item.key === key),
+        )
+      : prefillSeriesItems.map((item) => item.key);
   const decodeBatchChartData = batchData.map((point) => {
     const batchPoint = point as Record<string, number | string>;
     const normalized: Record<string, number | string> = {
       time: point.time,
     };
-    for (const nodeId of selectedDecodeNodeIds) {
+    for (const nodeId of visibleDecodeKeys) {
       normalized[nodeId] = Number(batchPoint[nodeId] ?? 0);
     }
     return normalized;
   });
+  const toggleSeriesKey = (
+    current: string[],
+    all: string[],
+    key: string,
+  ) => {
+    const base = current.filter((item) => all.includes(item)).length > 0
+      ? current.filter((item) => all.includes(item))
+      : all;
+
+    if (base.includes(key)) {
+      return base.length === 1 ? base : base.filter((item) => item !== key);
+    }
+
+    return [...base, key];
+  };
   const toggleDecodeNode = (nodeId: string) => {
     setDecodeFilter((current) => {
       const base =
@@ -528,6 +713,20 @@ export function MetricsPanel({
               <p className="mb-3 text-sm font-semibold">
                 {zh ? "按请求查看 TTFT" : "TTFT by Request"}
               </p>
+              <SeriesLegendControl
+                title={zh ? "图例控制" : "Legend"}
+                items={ttftSeriesItems}
+                selectedKeys={visibleTtftKeys}
+                onToggle={(key) =>
+                  setTtftSeriesFilter((current) =>
+                    toggleSeriesKey(
+                      current,
+                      ttftSeriesItems.map((item) => item.key),
+                      key,
+                    ),
+                  )
+                }
+              />
               <div className="h-72 min-w-0">
                 {mounted ? (
                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288}>
@@ -536,7 +735,9 @@ export function MetricsPanel({
                     <XAxis dataKey="request" fontSize={11} tickLine={false} axisLine={false} />
                     <YAxis fontSize={11} tickLine={false} axisLine={false} />
                     <Tooltip />
-                    <Bar dataKey="ttftMs" fill="#0f766e" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                    {visibleTtftKeys.includes("ttftMs") ? (
+                      <Bar dataKey="ttftMs" fill="#0f766e" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                    ) : null}
                   </BarChart>
                 </ResponsiveContainer>
                 ) : chartFallback}
@@ -547,6 +748,20 @@ export function MetricsPanel({
               <p className="mb-3 text-sm font-semibold">
                 {zh ? "按请求查看 TPOT" : "TPOT by Request"}
               </p>
+              <SeriesLegendControl
+                title={zh ? "图例控制" : "Legend"}
+                items={tpotSeriesItems}
+                selectedKeys={visibleTpotKeys}
+                onToggle={(key) =>
+                  setTpotSeriesFilter((current) =>
+                    toggleSeriesKey(
+                      current,
+                      tpotSeriesItems.map((item) => item.key),
+                      key,
+                    ),
+                  )
+                }
+              />
               <div className="h-72 min-w-0">
                 {mounted ? (
                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288}>
@@ -555,7 +770,9 @@ export function MetricsPanel({
                     <XAxis dataKey="request" fontSize={11} tickLine={false} axisLine={false} />
                     <YAxis fontSize={11} tickLine={false} axisLine={false} />
                     <Tooltip />
-                    <Bar dataKey="tpotMs" fill="#2563eb" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                    {visibleTpotKeys.includes("tpotMs") ? (
+                      <Bar dataKey="tpotMs" fill="#2563eb" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                    ) : null}
                   </BarChart>
                 </ResponsiveContainer>
                 ) : chartFallback}
@@ -566,6 +783,20 @@ export function MetricsPanel({
               <p className="mb-3 text-sm font-semibold">
                 {zh ? "吞吐趋势" : "Throughput"}
               </p>
+              <SeriesLegendControl
+                title={zh ? "图例控制" : "Legend"}
+                items={throughputSeries}
+                selectedKeys={visibleThroughputKeys}
+                onToggle={(key) =>
+                  setThroughputSeriesFilter((current) =>
+                    toggleSeriesKey(
+                      current,
+                      throughputSeries.map((item) => item.key),
+                      key,
+                    ),
+                  )
+                }
+              />
               <div className="h-72 min-w-0">
                 {mounted ? (
                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288}>
@@ -574,12 +805,21 @@ export function MetricsPanel({
                     <XAxis dataKey="time" fontSize={11} tickLine={false} axisLine={false} />
                     <YAxis fontSize={11} tickLine={false} axisLine={false} />
                     <Tooltip />
-                    <Legend />
-                    <Line type="monotone" dataKey="prefillTokenThroughput" stroke="#a16207" dot={false} strokeWidth={2} isAnimationActive={false} />
-                    <Line type="monotone" dataKey="inputThroughput" stroke="#f59e0b" dot={false} strokeWidth={2} isAnimationActive={false} />
-                    <Line type="monotone" dataKey="outputThroughput" stroke="#0ea5e9" dot={false} strokeWidth={2} isAnimationActive={false} />
-                    <Line type="monotone" dataKey="totalTokenThroughput" stroke="#7c3aed" dot={false} strokeWidth={2} isAnimationActive={false} />
-                    <Line type="monotone" dataKey="requestThroughput" stroke="#10b981" dot={false} strokeWidth={2} isAnimationActive={false} />
+                    {visibleThroughputKeys.includes("prefillTokenThroughput") ? (
+                      <Line type="monotone" dataKey="prefillTokenThroughput" stroke="#a16207" dot={false} strokeWidth={2} isAnimationActive={false} />
+                    ) : null}
+                    {visibleThroughputKeys.includes("inputThroughput") ? (
+                      <Line type="monotone" dataKey="inputThroughput" stroke="#f59e0b" dot={false} strokeWidth={2} isAnimationActive={false} />
+                    ) : null}
+                    {visibleThroughputKeys.includes("outputThroughput") ? (
+                      <Line type="monotone" dataKey="outputThroughput" stroke="#0ea5e9" dot={false} strokeWidth={2} isAnimationActive={false} />
+                    ) : null}
+                    {visibleThroughputKeys.includes("totalTokenThroughput") ? (
+                      <Line type="monotone" dataKey="totalTokenThroughput" stroke="#7c3aed" dot={false} strokeWidth={2} isAnimationActive={false} />
+                    ) : null}
+                    {visibleThroughputKeys.includes("requestThroughput") ? (
+                      <Line type="monotone" dataKey="requestThroughput" stroke="#10b981" dot={false} strokeWidth={2} isAnimationActive={false} />
+                    ) : null}
                   </LineChart>
                 </ResponsiveContainer>
                 ) : chartFallback}
@@ -590,6 +830,20 @@ export function MetricsPanel({
               <p className="mb-3 text-sm font-semibold">
                 {zh ? "按请求查看输出 Token 吞吐" : "OutputTokenThroughput by Request"}
               </p>
+              <SeriesLegendControl
+                title={zh ? "图例控制" : "Legend"}
+                items={outputTokenSeriesItems}
+                selectedKeys={visibleOutputTokenKeys}
+                onToggle={(key) =>
+                  setOutputTokenSeriesFilter((current) =>
+                    toggleSeriesKey(
+                      current,
+                      outputTokenSeriesItems.map((item) => item.key),
+                      key,
+                    ),
+                  )
+                }
+              />
               <div className="h-72 min-w-0">
                 {mounted ? (
                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288}>
@@ -598,12 +852,14 @@ export function MetricsPanel({
                     <XAxis dataKey="request" fontSize={11} tickLine={false} axisLine={false} />
                     <YAxis fontSize={11} tickLine={false} axisLine={false} />
                     <Tooltip />
-                    <Bar
-                      dataKey="outputTokenThroughputTokPerSec"
-                      fill="#7c3aed"
-                      radius={[4, 4, 0, 0]}
-                      isAnimationActive={false}
-                    />
+                    {visibleOutputTokenKeys.includes("outputTokenThroughputTokPerSec") ? (
+                      <Bar
+                        dataKey="outputTokenThroughputTokPerSec"
+                        fill="#7c3aed"
+                        radius={[4, 4, 0, 0]}
+                        isAnimationActive={false}
+                      />
+                    ) : null}
                   </BarChart>
                 </ResponsiveContainer>
                 ) : chartFallback}
@@ -614,6 +870,16 @@ export function MetricsPanel({
               <p className="mb-3 text-sm font-semibold">
                 {zh ? "队列长度" : "Queue Length"}
               </p>
+              <SeriesLegendControl
+                title={zh ? "图例控制" : "Legend"}
+                items={queueSeriesItems}
+                selectedKeys={visibleQueueKeys}
+                onToggle={(key) =>
+                  setQueueSeriesFilter((current) =>
+                    toggleSeriesKey(current, queueKeys, key),
+                  )
+                }
+              />
               <div className="h-72 min-w-0">
                 {mounted ? (
                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288}>
@@ -622,11 +888,10 @@ export function MetricsPanel({
                     <XAxis dataKey="time" fontSize={11} tickLine={false} axisLine={false} />
                     <YAxis fontSize={11} tickLine={false} axisLine={false} />
                     <Tooltip />
-                    <Legend />
-                    {queueKeys.map((key, index) => (
+                    {visibleQueueKeys.map((key, index) => (
                       <Line
                         key={key}
-                        type="stepAfter"
+                        type="monotone"
                         dataKey={key}
                         stroke={["#f59e0b", "#0ea5e9", "#8b5cf6", "#10b981"][index % 4]}
                         dot={false}
@@ -650,6 +915,20 @@ export function MetricsPanel({
                 selectedNodeIds={selectedDecodeNodeIds}
                 onToggle={toggleDecodeNode}
               />
+              <SeriesLegendControl
+                title={zh ? "图例控制" : "Legend"}
+                items={decodeSeriesItems}
+                selectedKeys={visibleDecodeKeys}
+                onToggle={(key) =>
+                  setDecodeSeriesFilter((current) =>
+                    toggleSeriesKey(
+                      current,
+                      decodeSeriesItems.map((item) => item.key),
+                      key,
+                    ),
+                  )
+                }
+              />
               <div className="h-72 min-w-0">
                 {mounted ? (
                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288}>
@@ -658,11 +937,10 @@ export function MetricsPanel({
                     <XAxis dataKey="time" fontSize={11} tickLine={false} axisLine={false} />
                     <YAxis fontSize={11} tickLine={false} axisLine={false} />
                     <Tooltip />
-                    <Legend />
-                    {selectedDecodeNodeIds.map((nodeId, index) => (
+                    {visibleDecodeKeys.map((nodeId, index) => (
                       <Line
                         key={nodeId}
-                        type="stepAfter"
+                        type="monotone"
                         dataKey={nodeId}
                         stroke={["#0ea5e9", "#2563eb", "#8b5cf6", "#14b8a6"][index % 4]}
                         dot={false}
@@ -688,6 +966,20 @@ export function MetricsPanel({
                 selectedNodeIds={selectedPrefillNodeIds}
                 onToggle={togglePrefillNode}
               />
+              <SeriesLegendControl
+                title={zh ? "图例控制" : "Legend"}
+                items={prefillSeriesItems}
+                selectedKeys={visiblePrefillSeriesKeys}
+                onToggle={(key) =>
+                  setPrefillSeriesFilter((current) =>
+                    toggleSeriesKey(
+                      current,
+                      prefillSeriesItems.map((item) => item.key),
+                      key,
+                    ),
+                  )
+                }
+              />
               <div className="h-72 min-w-0">
                 {mounted ? (
                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288}>
@@ -696,11 +988,11 @@ export function MetricsPanel({
                     <XAxis dataKey="time" fontSize={11} tickLine={false} axisLine={false} />
                     <YAxis fontSize={11} tickLine={false} axisLine={false} />
                     <Tooltip />
-                    <Legend />
-                    {selectedPrefillNodeIds.map((nodeId, index) => (
+                    {selectedPrefillNodeIds.map((nodeId, index) =>
+                      visiblePrefillSeriesKeys.includes(`${nodeId}_queue`) ? (
                       <Line
                         key={`${nodeId}_queue`}
-                        type="stepAfter"
+                        type="monotone"
                         dataKey={`${nodeId}_queue`}
                         name={`${nodeId} queue`}
                         stroke={["#f59e0b", "#d97706", "#b45309", "#92400e"][index % 4]}
@@ -708,11 +1000,13 @@ export function MetricsPanel({
                         strokeWidth={2}
                         isAnimationActive={false}
                       />
-                    ))}
-                    {selectedPrefillNodeIds.map((nodeId, index) => (
+                      ) : null,
+                    )}
+                    {selectedPrefillNodeIds.map((nodeId, index) =>
+                      visiblePrefillSeriesKeys.includes(`${nodeId}_batch`) ? (
                       <Line
                         key={`${nodeId}_batch`}
-                        type="stepAfter"
+                        type="monotone"
                         dataKey={`${nodeId}_batch`}
                         name={`${nodeId} active batch`}
                         stroke={["#10b981", "#059669", "#0d9488", "#0f766e"][index % 4]}
@@ -721,7 +1015,8 @@ export function MetricsPanel({
                         strokeWidth={2}
                         isAnimationActive={false}
                       />
-                    ))}
+                      ) : null,
+                    )}
                   </LineChart>
                 </ResponsiveContainer>
                 ) : chartFallback}
