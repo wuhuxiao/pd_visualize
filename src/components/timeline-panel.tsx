@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { formatMs } from "@/lib/format";
 import { type UiLocale, translateRequestStatus } from "@/lib/i18n";
@@ -27,7 +27,7 @@ interface Point {
   y: number;
 }
 
-const PAGE_SIZE = 8;
+const REQUEST_ROW_ESTIMATE_PX = 60;
 
 function segmentStyle(
   startMs: number | undefined,
@@ -333,19 +333,42 @@ export function TimelinePanel({
   locale,
   onSelectRequest,
 }: TimelinePanelProps) {
+  const requestListRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(8);
   const zh = locale === "zh-CN";
   const reversedRequests = useMemo(
     () => [...snapshot.requests].reverse(),
     [snapshot.requests],
   );
-  const totalPages = Math.max(Math.ceil(reversedRequests.length / PAGE_SIZE), 1);
+  useEffect(() => {
+    const container = requestListRef.current;
+    if (!container) {
+      return;
+    }
+
+    const updatePageSize = () => {
+      const nextPageSize = Math.max(
+        Math.floor(container.clientHeight / REQUEST_ROW_ESTIMATE_PX),
+        1,
+      );
+      setPageSize(nextPageSize);
+    };
+
+    updatePageSize();
+    const observer = new ResizeObserver(updatePageSize);
+    observer.observe(container);
+
+    return () => observer.disconnect();
+  }, []);
+
+  const totalPages = Math.max(Math.ceil(reversedRequests.length / pageSize), 1);
   const safePage = Math.min(page, totalPages);
-  const startIndex = (safePage - 1) * PAGE_SIZE;
-  const visibleRequests = reversedRequests.slice(startIndex, startIndex + PAGE_SIZE);
+  const startIndex = (safePage - 1) * pageSize;
+  const visibleRequests = reversedRequests.slice(startIndex, startIndex + pageSize);
 
   return (
-    <Card className="h-full">
+    <Card className="flex h-full min-h-0 flex-col">
       <CardHeader>
         <CardTitle>{zh ? "流动与时间轴" : "Flow & Timeline"}</CardTitle>
         <CardDescription>
@@ -354,10 +377,10 @@ export function TimelinePanel({
             : "The upper board animates traffic across concrete P and D instances. The lower list paginates every request lifecycle in the simulation."}
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="flex min-h-0 flex-1 flex-col gap-4">
         <FlowBoard snapshot={snapshot} locale={locale} />
 
-        <div className="rounded-xl border border-[color:var(--border)]">
+        <div className="flex min-h-[420px] max-h-[70vh] flex-[1.8] flex-col rounded-xl border border-[color:var(--border)]">
           <div className="flex flex-col gap-3 border-b border-[color:var(--border)] px-4 py-3 md:flex-row md:items-center md:justify-between">
             <div>
               <p className="text-sm font-semibold">
@@ -394,7 +417,10 @@ export function TimelinePanel({
               </Button>
             </div>
           </div>
-          <div className="max-h-[420px] space-y-1 overflow-y-auto p-2">
+          <div
+            ref={requestListRef}
+            className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2"
+          >
             {visibleRequests.map((request) => (
               <RequestRow
                 key={request.id}
@@ -408,11 +434,11 @@ export function TimelinePanel({
           </div>
         </div>
 
-        <div className="rounded-xl border border-[color:var(--border)]">
+        <div className="flex min-h-[260px] max-h-[28vh] flex-1 flex-col rounded-xl border border-[color:var(--border)]">
           <div className="border-b border-[color:var(--border)] px-4 py-3">
             <p className="text-sm font-semibold">{zh ? "事件流" : "Event Feed"}</p>
           </div>
-          <div className="max-h-[180px] divide-y divide-[color:var(--border)] overflow-y-auto">
+          <div className="min-h-0 flex-1 divide-y divide-[color:var(--border)] overflow-y-auto">
             {snapshot.systemEvents.map((event) => (
               <div
                 key={event.id}

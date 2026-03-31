@@ -1,6 +1,11 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 import {
   Bar,
   BarChart,
@@ -21,9 +26,6 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-const subscribeNoop = () => () => undefined;
-const getClientMountedSnapshot = () => true;
-const getServerMountedSnapshot = () => false;
 const MAX_REALTIME_CHART_POINTS = 240;
 const MAX_FINAL_CHART_POINTS = 180;
 
@@ -150,6 +152,62 @@ function SummaryCard({
       </p>
       <p className="mt-2 text-xl font-semibold">{value}</p>
       <p className="mt-1 text-xs text-[color:var(--muted-foreground)]">{hint}</p>
+    </div>
+  );
+}
+
+function ChartViewport({
+  children,
+  fallback,
+}: {
+  children: ReactElement;
+  fallback: ReactElement;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateSize = () => {
+      setSize({
+        width: element.clientWidth,
+        height: element.clientHeight,
+      });
+    };
+
+    updateSize();
+
+    const observer = new ResizeObserver(() => {
+      updateSize();
+    });
+
+    observer.observe(element);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  const ready = size.width > 0 && size.height > 0;
+
+  return (
+    <div ref={containerRef} className="h-72 min-h-[288px] min-w-0">
+      {ready ? (
+        <ResponsiveContainer
+          width="100%"
+          height="100%"
+          minWidth={0}
+          minHeight={288}
+        >
+          {children}
+        </ResponsiveContainer>
+      ) : (
+        fallback
+      )}
     </div>
   );
 }
@@ -319,11 +377,6 @@ export function MetricsPanel({
   onChartModeChange,
 }: MetricsPanelProps) {
   const zh = locale === "zh-CN";
-  const mounted = useSyncExternalStore(
-    subscribeNoop,
-    getClientMountedSnapshot,
-    getServerMountedSnapshot,
-  );
   const [decodeFilter, setDecodeFilter] = useState<string[]>([]);
   const [prefillFilter, setPrefillFilter] = useState<string[]>([]);
   const [ttftSeriesFilter, setTtftSeriesFilter] = useState<string[]>(["ttftMs"]);
@@ -727,9 +780,7 @@ export function MetricsPanel({
                   )
                 }
               />
-              <div className="h-72 min-w-0">
-                {mounted ? (
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288}>
+              <ChartViewport fallback={chartFallback}>
                   <BarChart data={ttftData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.2)" />
                     <XAxis dataKey="request" fontSize={11} tickLine={false} axisLine={false} />
@@ -739,9 +790,7 @@ export function MetricsPanel({
                       <Bar dataKey="ttftMs" fill="#0f766e" radius={[4, 4, 0, 0]} isAnimationActive={false} />
                     ) : null}
                   </BarChart>
-                </ResponsiveContainer>
-                ) : chartFallback}
-              </div>
+              </ChartViewport>
             </div>
 
             <div className="min-w-0 rounded-xl border border-[color:var(--border)] p-3">
@@ -762,9 +811,7 @@ export function MetricsPanel({
                   )
                 }
               />
-              <div className="h-72 min-w-0">
-                {mounted ? (
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288}>
+              <ChartViewport fallback={chartFallback}>
                   <BarChart data={tpotData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.2)" />
                     <XAxis dataKey="request" fontSize={11} tickLine={false} axisLine={false} />
@@ -774,9 +821,7 @@ export function MetricsPanel({
                       <Bar dataKey="tpotMs" fill="#2563eb" radius={[4, 4, 0, 0]} isAnimationActive={false} />
                     ) : null}
                   </BarChart>
-                </ResponsiveContainer>
-                ) : chartFallback}
-              </div>
+              </ChartViewport>
             </div>
 
             <div className="min-w-0 rounded-xl border border-[color:var(--border)] p-3">
@@ -797,9 +842,7 @@ export function MetricsPanel({
                   )
                 }
               />
-              <div className="h-72 min-w-0">
-                {mounted ? (
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288}>
+              <ChartViewport fallback={chartFallback}>
                   <LineChart data={throughputData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.2)" />
                     <XAxis dataKey="time" fontSize={11} tickLine={false} axisLine={false} />
@@ -821,9 +864,7 @@ export function MetricsPanel({
                       <Line type="monotone" dataKey="requestThroughput" stroke="#10b981" dot={false} strokeWidth={2} isAnimationActive={false} />
                     ) : null}
                   </LineChart>
-                </ResponsiveContainer>
-                ) : chartFallback}
-              </div>
+              </ChartViewport>
             </div>
 
             <div className="min-w-0 rounded-xl border border-[color:var(--border)] p-3">
@@ -844,9 +885,7 @@ export function MetricsPanel({
                   )
                 }
               />
-              <div className="h-72 min-w-0">
-                {mounted ? (
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288}>
+              <ChartViewport fallback={chartFallback}>
                   <BarChart data={outputTokenThroughputData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.2)" />
                     <XAxis dataKey="request" fontSize={11} tickLine={false} axisLine={false} />
@@ -861,9 +900,7 @@ export function MetricsPanel({
                       />
                     ) : null}
                   </BarChart>
-                </ResponsiveContainer>
-                ) : chartFallback}
-              </div>
+              </ChartViewport>
             </div>
 
             <div className="min-w-0 rounded-xl border border-[color:var(--border)] p-3">
@@ -880,9 +917,7 @@ export function MetricsPanel({
                   )
                 }
               />
-              <div className="h-72 min-w-0">
-                {mounted ? (
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288}>
+              <ChartViewport fallback={chartFallback}>
                   <LineChart data={queueData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.2)" />
                     <XAxis dataKey="time" fontSize={11} tickLine={false} axisLine={false} />
@@ -900,9 +935,7 @@ export function MetricsPanel({
                       />
                     ))}
                   </LineChart>
-                </ResponsiveContainer>
-                ) : chartFallback}
-              </div>
+              </ChartViewport>
             </div>
 
             <div className="min-w-0 rounded-xl border border-[color:var(--border)] p-3">
@@ -929,9 +962,7 @@ export function MetricsPanel({
                   )
                 }
               />
-              <div className="h-72 min-w-0">
-                {mounted ? (
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288}>
+              <ChartViewport fallback={chartFallback}>
                   <LineChart data={decodeBatchChartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.2)" />
                     <XAxis dataKey="time" fontSize={11} tickLine={false} axisLine={false} />
@@ -949,9 +980,7 @@ export function MetricsPanel({
                       />
                     ))}
                   </LineChart>
-                </ResponsiveContainer>
-                ) : chartFallback}
-              </div>
+              </ChartViewport>
             </div>
 
             <div className="min-w-0 rounded-xl border border-[color:var(--border)] p-3">
@@ -980,9 +1009,7 @@ export function MetricsPanel({
                   )
                 }
               />
-              <div className="h-72 min-w-0">
-                {mounted ? (
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288}>
+              <ChartViewport fallback={chartFallback}>
                   <LineChart data={prefillCombinedData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.2)" />
                     <XAxis dataKey="time" fontSize={11} tickLine={false} axisLine={false} />
@@ -1018,9 +1045,7 @@ export function MetricsPanel({
                       ) : null,
                     )}
                   </LineChart>
-                </ResponsiveContainer>
-                ) : chartFallback}
-              </div>
+              </ChartViewport>
             </div>
           </div>
 

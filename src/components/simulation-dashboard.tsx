@@ -141,7 +141,7 @@ export function SimulationDashboard() {
         }
       />
 
-      <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)_360px]">
+      <div className="grid flex-1 items-stretch gap-4 xl:min-h-[calc(100vh-16rem)] xl:grid-cols-[320px_minmax(0,1fr)_360px]">
         <TopologyPanel snapshot={snapshot} locale={locale} />
         <TimelinePanel
           snapshot={snapshot}
